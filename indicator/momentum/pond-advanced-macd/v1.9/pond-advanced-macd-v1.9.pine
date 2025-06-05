@@ -1,0 +1,83 @@
+//@version=6
+indicator(title="Pond Advanced MACD V1.9", shorttitle="Pond_MACD_V1.9", overlay=false, format=format.price, precision=2)
+
+// ——— Inputs
+priceSource = input.source(close, title="Price Source")
+fastLength = input.int(12, title="Fast EMA Length")
+slowLength = input.int(26, title="Slow EMA Length")
+signalLength = input.int(9, title="Signal Line EMA Length")
+
+decimals = input.int(2, title="Decimal Places", minval=0, maxval=10)
+labelOffset = input.int(6, title="Label Offset")
+labelTextColor = input.color(color.white, title="Text Color")
+labelBgColorUp = input.color(color.new(#26A69A, 50), title="BG MACD Rising")
+labelBgColorDown = input.color(color.new(#EF5350, 50), title="BG MACD Falling")
+
+showTable = input.bool(true, title="Show Info Table")
+showProjectionLine = input.bool(false, title="Show Projected Cross Line")
+showHistogram = input.bool(true, title="Show Histogram")
+
+// ——— MACD Core
+fastEMA = ta.ema(priceSource, fastLength)
+slowEMA = ta.ema(priceSource, slowLength)
+macd = fastEMA - slowEMA
+signal = ta.ema(macd, signalLength)
+hist = macd - signal
+
+// ——— Reverse functions (CT MACD)
+alpha(len) => 2.0 / (len + 1)
+
+macd_eq(price, fastLen, slowLen) =>
+    (alpha(fastLen) * ta.ema(price, fastLen)[1] - alpha(slowLen) * ta.ema(price, slowLen)[1]) / (alpha(fastLen) - alpha(slowLen))
+
+macd_level(level, price, fastLen, slowLen) =>
+    (level + (1 - alpha(slowLen)) * ta.ema(price, slowLen)[1] - (1 - alpha(fastLen)) * ta.ema(price, fastLen)[1]) / (alpha(fastLen) - alpha(slowLen))
+
+macd_cross_ema(P, macdSeries, X, Y, Z) =>
+    pEMAx = ta.ema(P, X)[1]
+    pEMAy = ta.ema(P, Y)[1]
+    pEMAz = ta.ema(macdSeries, Z)[1]
+    numerator = pEMAx * alpha(X) * alpha(Z) - pEMAy * alpha(Y) * alpha(Z) - pEMAx * alpha(X) + pEMAy * alpha(Y)
+    numerator := numerator + pEMAy * alpha(Z) + pEMAz * alpha(Z) - pEMAx * alpha(Z) - pEMAy - pEMAz + pEMAx
+    denominator = alpha(X) * alpha(Z) - alpha(Y) * alpha(Z) - alpha(X) + alpha(Y)
+    numerator / denominator
+
+// ——— Price Projections
+macd_eq_level = macd_eq(priceSource, fastLength, slowLength)
+proj_up_raw = macd_cross_ema(priceSource, macd, fastLength, slowLength, signalLength)
+proj_down_raw = proj_up_raw
+projected_cross_up = macd < signal ? proj_up_raw : na
+projected_cross_down = macd > signal ? proj_down_raw : na
+macd_zero_level = macd_level(0, priceSource, fastLength, slowLength)
+
+// ——— % difference
+percent_diff(target) => not na(target) ? ((target - close) / close) * 100 : na
+
+pct_eq = percent_diff(macd_eq_level)
+pct_cross_up = percent_diff(projected_cross_up)
+pct_cross_down = percent_diff(projected_cross_down)
+pct_zero = percent_diff(macd_zero_level)
+
+// ——— Table Layout
+if showTable
+    var table infoTable = table.new(position.bottom_right, 1, 4, border_width=1)
+    isUp = macd > macd[1]
+    trend = isUp ? "↑" : "↓"
+    bgColor = isUp ? labelBgColorUp : labelBgColorDown
+
+    table.cell(infoTable, 0, 0, "MACD: " + trend + " " + str.tostring(macd_eq_level, format.mintick), text_color=color.white, bgcolor=bgColor, text_halign=text.align_left)
+    table.cell(infoTable, 0, 1, "↑: " + (na(projected_cross_up) ? "–" : str.tostring(projected_cross_up, format.mintick) + " (" + str.tostring(pct_cross_up, "#.##") + "%)"), text_color=color.white, bgcolor=color.new(color.gray, 85), text_halign=text.align_left)
+    table.cell(infoTable, 0, 2, "↓: " + (na(projected_cross_down) ? "–" : str.tostring(projected_cross_down, format.mintick) + " (" + str.tostring(pct_cross_down, "#.##") + "%)"), text_color=color.white, bgcolor=color.new(color.gray, 85), text_halign=text.align_left)
+    table.cell(infoTable, 0, 3, "↓0: " + str.tostring(macd_zero_level, format.mintick) + " (" + str.tostring(pct_zero, "#.##") + "%)", text_color=color.white, bgcolor=color.new(color.gray, 85), text_halign=text.align_left)
+
+// ——— Debug Lines
+plot(showProjectionLine and not na(projected_cross_up) ? projected_cross_up : na, "Proj Cross Up", color=color.green, style=plot.style_linebr)
+plot(showProjectionLine and not na(projected_cross_down) ? projected_cross_down : na, "Proj Cross Down", color=color.red, style=plot.style_linebr)
+plot(showProjectionLine and not na(macd_eq_level) ? macd_eq_level : na, "Proj EQ", color=color.orange, style=plot.style_linebr)
+
+// ——— Main Plots
+plot(macd, title="MACD", color=color.white, linewidth=2)
+plot(signal, title="Signal Line", color=color.blue, linewidth=2)
+hline(0, "Zero Line", color=#787B86)
+plot(showHistogram ? hist : na, title="Histogram", style=plot.style_columns, color=hist >= 0 ? color.new(color.white, 50) : color.new(color.blue, 50))
+bgcolor(color.new(color.gray, 95))
