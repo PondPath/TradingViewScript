@@ -1,0 +1,4 @@
+//@version=5
+indicator("Pond RSI V1.1", overlay=false)
+rsi = ta.rsi(close, 14)
+plot(rsi, color=color.orange)
