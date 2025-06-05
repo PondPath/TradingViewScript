@@ -1,0 +1,56 @@
+//@version=6
+indicator(shorttitle="Pond BB Multi", title="Pond Multi Bollinger Bands", overlay=true)
+
+// === INPUTS ===
+length     = input.int(20, minval=1, title="Length", inline="length", tooltip="Basis length")
+maType     = input.string("SMA", "Basis MA Type", options = ["SMA", "EMA", "SMMA (RMA)", "WMA", "VWMA"], inline="ma")
+src        = input.source(close, "Source", inline="src")
+offset     = input.int(0, "Offset", minval = -500, maxval = 500, inline="off")
+showFill   = input.bool(false, "Show Background Fill")  // default: OFF
+
+// StdDev Levels (default: 1, 2, 3)
+std1 = input.float(1.0, title="Standard Deviation 1")
+std2 = input.float(2.0, title="Standard Deviation 2")
+std3 = input.float(3.0, title="Standard Deviation 3")
+
+// === FUNCTION TO PICK MA ===
+maFunc(source, length, type) =>
+    switch type
+        "SMA" => ta.sma(source, length)
+        "EMA" => ta.ema(source, length)
+        "SMMA (RMA)" => ta.rma(source, length)
+        "WMA" => ta.wma(source, length)
+        "VWMA" => ta.vwma(source, length)
+
+// === CALCULATIONS ===
+basis = maFunc(src, length, maType)
+stdev = ta.stdev(src, length)
+
+// Levels
+upper1 = basis + stdev * std1
+lower1 = basis - stdev * std1
+upper2 = basis + stdev * std2
+lower2 = basis - stdev * std2
+upper3 = basis + stdev * std3
+lower3 = basis - stdev * std3
+
+// === PLOTS ===
+// Basis Line (Blue)
+plot(basis, "Basis", color=color.rgb(33, 150, 243), offset=offset)
+
+// StdDev 1 Band (Blue)
+pU1 = plot(upper1, "Upper 1", color=color.rgb(2, 136, 209), offset=offset)
+pL1 = plot(lower1, "Lower 1", color=color.rgb(2, 136, 209), offset=offset)
+
+// StdDev 2 Band (Gold/Amber)
+pU2 = plot(upper2, "Upper 2", color=color.rgb(255, 160, 0), offset=offset)
+pL2 = plot(lower2, "Lower 2", color=color.rgb(255, 160, 0), offset=offset)
+
+// StdDev 3 Band (Grey) - Thickness = 2
+pU3 = plot(upper3, "Upper 3", color=color.rgb(189, 189, 189), offset=offset, linewidth=2)
+pL3 = plot(lower3, "Lower 3", color=color.rgb(189, 189, 189), offset=offset, linewidth=2)
+
+// === FILLS ===
+fill(pU1, pL1, title="Fill 1", color=showFill ? color.rgb(2, 136, 209, 90) : na)
+fill(pU2, pL2, title="Fill 2", color=showFill ? color.rgb(255, 160, 0, 60) : na)
+fill(pU3, pL3, title="Fill 3", color=showFill ? color.rgb(189, 189, 189, 40) : na)
