@@ -1,1 +1,212 @@
+//@version=6
+//@version_note="v2.12 – fixed pivot‐input commas"
+indicator("Pond RSI-Div v2.12", shorttitle="Pond RSI v2.12", format=format.price, overlay=false)
+
+//────────────────── INPUTS ──────────────────
+// RSI
+len     = input.int(14,       "RSI period",      group="RSI")
+src     = input.source(close, "Source",          group="RSI")
+
+// Pivot parameters
+showPivots      = input.bool(true,  "Plot: Hi/Lo pivot arrows", group="Pivot")
+pivotArrowColor = input.color(color.white, "Arrow color",         group="Pivot")
+pivotLogic      = input.string(defval="Close Below / Above", title="Pivot logic", options=["Close Below / Above","Tick Below / Above"], group="Pivot")
+pivotType       = input.string(defval="Wick Low / High",    title="Pivot type",  options=["Wick Low / High","Bar Low / High"], group="Pivot")
+lbL             = input.int(5, "Look-back left",  minval=1, group="Pivot")
+lbR             = input.int(5, "Look-back right", minval=1, group="Pivot")
+
+// Divergence parameters
+maxD    = input.int(60,  "Max bars between pivots", group="Divergences")
+minD    = input.int(5,   "Min bars between pivots", group="Divergences")
+showRB  = input.bool(true,  "Regular bullish",   group="Divergences")
+showHB  = input.bool(true,  "Hidden bullish",    group="Divergences")
+showRS  = input.bool(true,  "Regular bearish",   group="Divergences")
+showHS  = input.bool(true,  "Hidden bearish",    group="Divergences")
+showLn  = input.bool(false, "Connector lines",   group="Divergences")
+gapB    = input.int(0, "Bull marker gap", 0,20,   group="Divergences")
+gapS    = input.int(0, "Bear marker gap", 0,20,   group="Divergences")
+
+// Signal-line
+showSig = input.bool(true, "Show signal line", group="Signal")
+sigLen  = input.int(12,    "Signal period",   group="Signal")
+sigType = input.string(defval="EMA", title="Signal type", options=["EMA","SMA","RMA","WMA"], group="Signal")
+
+// Zones
+showZones = input.bool(true, "Show zones", group="Zones")
+fillZones = input.bool(true, "Fill zones", group="Zones")
+critBull  = input.int(80,  "Critical Bull upper", 1,99, group="Zones")
+ctlBull   = input.int(62,  "Control Bull upper",  1,99, group="Zones")
+ctlBear   = input.int(38,  "Control Bear lower",  1,99, group="Zones")
+critBear  = input.int(20,  "Critical Bear lower", 1,99, group="Zones")
+
+// Projection targets
+projCritBull = input.int(80, "Proj: Critical Bull", group="Projection")
+projCtlBull  = input.int(62, "Proj: Control Bull",  group="Projection")
+projMid      = input.int(50, "Proj: Midline 50",    group="Projection")
+projCtlBear  = input.int(38, "Proj: Control Bear",  group="Projection")
+projCritBear = input.int(20, "Proj: Critical Bear", group="Projection")
+
+// Alerts
+alertPivot     = input.bool(false, "Pivot Hi/Lo Alerts",   group="Alerts")
+alertPotential = input.bool(false, "Potential Div Alerts", group="Alerts")
+alertConfirmed = input.bool(false, "Confirmed Div Alerts", group="Alerts")
+alertMidCross  = input.bool(false, "Midline Cross Alerts", group="Alerts")
+alertSigCross  = input.bool(false, "Signal Cross Alerts",  group="Alerts")
+
+// Colours
+colRSI   = input.color(color.new(#1E60D1,0), "RSI colour")
+colRegB  = input.color(color.new(#A0A0A0,0), "Regular Bull colour")
+colHidB  = input.color(color.new(#71C8FF,0), "Hidden Bull colour")
+colRegS  = input.color(color.new(#FF7979,0), "Regular Bear colour")
+colHidS  = input.color(color.new(#FFC26E,0), "Hidden Bear colour")
+colNone  = color.new(color.white,100)
+
+//──────────────── RSI & SIGNAL ─────────────────
+rsi = ta.rsi(src, len)
+sig = sigType == "SMA" ? ta.sma(rsi, sigLen) :
+      sigType == "RMA" ? ta.rma(rsi, sigLen) :
+      sigType == "WMA" ? ta.wma(rsi, sigLen) :
+                         ta.ema(rsi, sigLen)
+
+plot(rsi,      "RSI",    colRSI, 2)
+plot(showSig ? sig : na, "Signal", color.white, 1)
+
+//──────────────── ZONES ─────────────────
+h1 = hline(critBull, "CritBull", showZones ? color.new(colRegS,20) : na, linestyle=hline.style_dashed)
+h2 = hline(ctlBull,  "CtlBull",  showZones ? color.new(colRegS,60) : na, linestyle=hline.style_dotted)
+h3 = hline(ctlBear,  "CtlBear",  showZones ? color.new(colRegB,60) : na, linestyle=hline.style_dotted)
+h4 = hline(critBear, "CritBear", showZones ? color.new(colRegB,20) : na, linestyle=hline.style_dashed)
+h5 = hline(50,       "Mid",      showZones ? color.new(color.gray,50) : na)
+
+fill(h1, h2, showZones and fillZones ? color.new(colRegS,90) : na)
+fill(h4, h3, showZones and fillZones ? color.new(colRegB,90) : na)
+
+//──────────────── PIVOT ENGINE ─────────────────
+plRaw = ta.pivotlow(rsi, lbL, lbR)
+phRaw = ta.pivothigh(rsi, lbL, lbR)
+pL    = not na(plRaw)
+pH    = not na(phRaw)
+
+//──────────────── PIVOT ARROWS ─────────────────
+upVal   = showPivots and pL ? rsi[lbR] : na
+downVal = showPivots and pH ? rsi[lbR] : na
+plotshape(upVal,   offset=-lbR, style=shape.triangleup,   location=location.absolute, size=size.tiny, color=pivotArrowColor)
+plotshape(downVal, offset=-lbR, style=shape.triangledown, location=location.absolute, size=size.tiny, color=pivotArrowColor)
+
+//──────────────── DIVERGENCES ─────────────────
+barsPL = ta.barssince(pL[1])
+barsPH = ta.barssince(pH[1])
+inRPL  = minD <= barsPL and barsPL <= maxD
+inRPH  = minD <= barsPH and barsPH <= maxD
+
+prevRsiPL = ta.valuewhen(pL, rsi[lbR], 1)
+prevLow   = ta.valuewhen(pL, low[lbR],  1)
+prevRsiPH = ta.valuewhen(pH, rsi[lbR],  1)
+prevHigh  = ta.valuewhen(pH, high[lbR], 1)
+
+regBull = showRB and pL and inRPL and (rsi[lbR] > prevRsiPL) and (low[lbR]  < prevLow)
+hidBull = showHB and pL and inRPL and (rsi[lbR] < prevRsiPL) and (low[lbR]  > prevLow)
+regBear = showRS and pH and inRPH and (rsi[lbR] < prevRsiPH) and (high[lbR] > prevHigh)
+hidBear = showHS and pH and inRPH and (rsi[lbR] > prevRsiPH) and (high[lbR] < prevHigh)
+
+// connector memory
+var int   lRBbar = na
+var float lRBval = na
+var int   lHBbar = na
+var float lHBval = na
+var int   lRBar  = na
+var float lRVal  = na
+var int   lHBar  = na
+var float lHVal  = na
+
+// Regular Bull
+plotshape(regBull ? rsi[lbR] + gapB : na, offset=-lbR, location=location.absolute, style=shape.circle, size=size.tiny, color=colRegB)
+plot( pL ? rsi[lbR] : na, offset=-lbR, color=regBull ? colRegB : colNone, linewidth=1)
+if regBull and showLn
+    line.new(lRBbar, lRBval, bar_index-lbR, rsi[lbR], color=colRegB, width=1)
+lRBbar := regBull ? bar_index-lbR : nz(lRBbar)
+lRBval := regBull ? rsi[lbR]       : nz(lRBval)
+
+// Hidden Bull
+plotshape(hidBull ? rsi[lbR] + gapB : na, offset=-lbR, location=location.absolute, style=shape.circle, size=size.tiny, color=colHidB)
+plot( pL ? rsi[lbR] : na, offset=-lbR, color=hidBull ? colHidB : colNone, linewidth=1)
+if hidBull and showLn
+    line.new(lHBbar, lHBval, bar_index-lbR, rsi[lbR], color=colHidB, width=1)
+lHBbar := hidBull ? bar_index-lbR : nz(lHBbar)
+lHBval := hidBull ? rsi[lbR]       : nz(lHBval)
+
+// Regular Bear
+plotshape(regBear ? rsi[lbR] - gapS : na, offset=-lbR, location=location.absolute, style=shape.circle, size=size.tiny, color=colRegS)
+plot( pH ? rsi[lbR] : na, offset=-lbR, color=regBear ? colRegS : colNone, linewidth=1)
+if regBear and showLn
+    line.new(lRBar, lRVal, bar_index-lbR, rsi[lbR], color=colRegS, width=1)
+lRBar := regBear ? bar_index-lbR : nz(lRBar)
+lRVal := regBear ? rsi[lbR]       : nz(lRVal)
+
+// Hidden Bear
+plotshape(hidBear ? rsi[lbR] - gapS : na, offset=-lbR, location=location.absolute, style=shape.circle, size=size.tiny, color=colHidS)
+plot( pH ? rsi[lbR] : na, offset=-lbR, color=hidBear ? colHidS : colNone, linewidth=1)
+if hidBear and showLn
+    line.new(lHBar, lHVal, bar_index-lbR, rsi[lbR], color=colHidS, width=1)
+lHBar := hidBear ? bar_index-lbR : nz(lHBar)
+lHVal := hidBear ? rsi[lbR]       : nz(lHVal)
+
+// Confirmed divergence
+confirmedBull = regBull and low  < low[lbR]
+confirmedBear = regBear and high > high[lbR]
+
+//──────────────── ALERT CONDITIONS ─────────────────
+alertcondition(alertPivot     and pL,           title="RSI Pivot Low",        message="RSI pivot-low on {{ticker}} {{interval}}")
+alertcondition(alertPivot     and pH,           title="RSI Pivot High",       message="RSI pivot-high on {{ticker}} {{interval}}")
+alertcondition(alertPotential and regBull,      title="Potential Bull Div",    message="Potential bullish divergence on {{ticker}} {{interval}}")
+alertcondition(alertPotential and regBear,      title="Potential Bear Div",    message="Potential bearish divergence on {{ticker}} {{interval}}")
+alertcondition(alertConfirmed and confirmedBull, title="Confirmed Bull Div",    message="Confirmed bullish divergence on {{ticker}} {{interval}}")
+alertcondition(alertConfirmed and confirmedBear, title="Confirmed Bear Div",    message="Confirmed bearish divergence on {{ticker}} {{interval}}")
+alertcondition(alertMidCross  and ta.cross(rsi,50),            title="RSI Cross 50",    message="RSI crossed 50 on {{ticker}} {{interval}}")
+alertcondition(alertSigCross  and showSig and ta.cross(rsi,sig), title="RSI ↔ Signal",     message="RSI crossed its signal on {{ticker}} {{interval}}")
+
+//──────────────── Price-for-RSI helper ─────────────────
+priceForRSI(target) =>
+    up     = math.max(src - src[1], 0)
+    dn     = math.max(src[1] - src, 0)
+    uAvg   = ta.rma(up, len)
+    dAvg   = ta.rma(dn, len)
+    RS_t   = 100 / (100 - target) - 1
+    L      = len - 1
+    uPrev  = uAvg[1]
+    dPrev  = dAvg[1]
+    cPrev  = close[1]
+    pUp    = cPrev + (RS_t * dPrev * L - uPrev * L)
+    pDown  = cPrev - (uPrev * L / RS_t - dPrev * L)
+    pUp >= cPrev ? pUp : pDown
+
+//──────────────── PROJECTION TABLE ─────────────────
+var table t = table.new(position.middle_right, 2, 6,
+     bgcolor=color.new(color.black,80), frame_color=color.gray, frame_width=1, border_width=1)
+
+deepRed   = color.new(#7E1E1E,0)
+semiRed   = color.new(#B84C4C,0)
+darkGrey  = color.new(#404040,0)
+semiGreen = color.new(#4CB879,0)
+deepGreen = color.new(#1E5C1E,0)
+
+headerBg = rsi >= critBull ? deepRed :
+           rsi >= ctlBull  ? semiRed :
+           rsi >= ctlBear  ? darkGrey :
+           rsi >= critBear ? semiGreen :
+                              deepGreen
+
+arrow = rsi >= 50 ? "↑" : "↓"
+table.cell(t, 0, 0, "Trend: " + arrow,                         text_color=color.white, bgcolor=headerBg)
+table.cell(t, 1, 0, str.tostring(priceForRSI(50), format.mintick), text_color=color.white, bgcolor=headerBg)
+table.cell(t, 0, 1, "Overbought",                              text_color=color.white)
+table.cell(t, 1, 1, str.tostring(priceForRSI(projCritBull), format.mintick), text_color=color.white)
+table.cell(t, 0, 2, "Bull",                                    text_color=color.white)
+table.cell(t, 1, 2, str.tostring(priceForRSI(projCtlBull),  format.mintick), text_color=color.white)
+table.cell(t, 0, 3, "Mid 50",                                 text_color=color.white)
+table.cell(t, 1, 3, str.tostring(priceForRSI(projMid),       format.mintick), text_color=color.white)
+table.cell(t, 0, 4, "Bear",                                   text_color=color.white)
+table.cell(t, 1, 4, str.tostring(priceForRSI(projCtlBear),  format.mintick), text_color=color.white)
+table.cell(t, 0, 5, "Oversold",                               text_color=color.white)
+table.cell(t, 1, 5, str.tostring(priceForRSI(projCritBear), format.mintick), text_color=color.white)
 
