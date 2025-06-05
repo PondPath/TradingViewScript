@@ -1,0 +1,316 @@
+//@version=6
+indicator("POND HPDR v1.0.2", shorttitle="POND HPDR v1.0.2", overlay=true)
+
+// === INPUTS === 
+// (Exactly as in YOUR v1.0.1 base script that you provided)
+price_source = input.source(close, title="Price Source", group="Main Properties")
+sampling_length = input.int(7, title="Sampling Length", group="Main Properties", minval=1)
+var PRACTICAL_ARRAY_MAX_LEN = 2000 
+anchor_ma_type = input.string("Displaced Source", title="Anchor Line Type (Calc. Base)", 
+                              options=["SMA", "EMA", "WMA", "VWMA", "Median", "MidPoint", "HMA", "RMA", "Displaced Source"], 
+                              group="Anchor Line Settings")
+median_plot_color = input.color(color.new(color.orange, 0), title="Plotted Median Line Color", group="Anchor Line Settings") 
+range_plot_on = input.bool(true, title="Show Bands", group="Band Display Settings")
+line_transparency_plot = input.int(20, title="Band Line Transparency", group="Band Display Settings", minval=0, maxval=100) 
+fill_on = input.bool(true, title="Show Fills", group="Band Display Settings") 
+fill_transparency_plot = input.int(85, title="Band Fill Transparency", group="Band Display Settings", minval=0, maxval=100) 
+text_on = input.bool(true, title="Show % Labels", group="Text Label Settings")
+text_color_scale = input.color(color.new(color.white, 0), "Label Text Color", group="Text Label Settings")
+text_size_scale = input.string("Small", "Label Text Size", options=["Tiny", "Small", "Normal", "Large", "Huge"], group="Text Label Settings")
+label_offset_input = input.int(3, title="Label X-Offset (Bars)", group="Text Label Settings", minval=0)
+enable_projection_input = input.bool(false, title="Enable Band Projection", group="Band Projection Settings")
+projection_length_input = input.int(10, title="Projection Length (Bars)", group="Band Projection Settings", minval=1)
+
+string GROUP_R1 = "Range 1 Settings"
+string GROUP_R2 = "Range 2 Settings"
+string GROUP_R3 = "Range 3 Settings"
+string GROUP_R4 = "Range 4 Settings"
+string GROUP_R5 = "Range 5 Settings"
+string GROUP_R6 = "Range 6 Settings"
+string GROUP_R7 = "Range 7 Settings"
+string GROUP_R8 = "Range 8 Settings"
+
+range1_val_input = input.float(38.2, title="R1 Value (%)", group=GROUP_R1, inline="R1_val")
+range1_col_input = input.color(color.new(color.blue, 0), title="R1 Color", group=GROUP_R1, inline="R1_col") 
+range2_val_input = input.float(50.0, title="R2 Value (%)", group=GROUP_R2, inline="R2_val")
+range2_col_input = input.color(color.new(color.aqua, 0), title="R2 Color", group=GROUP_R2, inline="R2_col") 
+range3_val_input = input.float(61.8, title="R3 Value (%)", group=GROUP_R3, inline="R3_val")
+range3_col_input = input.color(color.new(color.green, 0), title="R3 Color", group=GROUP_R3, inline="R3_col") 
+range4_val_input = input.float(78.6, title="R4 Value (%)", group=GROUP_R4, inline="R4_val")
+range4_col_input = input.color(color.new(color.lime, 0), title="R4 Color", group=GROUP_R4, inline="R4_col") 
+range5_val_input = input.float(88.3, title="R5 Value (%)", group=GROUP_R5, inline="R5_val")
+range5_col_input = input.color(color.new(color.yellow, 0), title="R5 Color", group=GROUP_R5, inline="R5_col") 
+range6_val_input = input.float(95.0, title="R6 Value (%)", group=GROUP_R6, inline="R6_val")
+range6_col_input = input.color(color.new(color.orange, 0), title="R6 Color", group=GROUP_R6, inline="R6_col") 
+range7_val_input = input.float(97.5, title="R7 Value (%)", group=GROUP_R7, inline="R7_val")
+range7_col_input = input.color(color.new(color.maroon, 0), title="R7 Color", group=GROUP_R7, inline="R7_col") 
+range8_val_input = input.float(100.0, title="R8 Value (%)", group=GROUP_R8, inline="R8_val")
+range8_col_input = input.color(color.new(color.red, 0), title="R8 Color", group=GROUP_R8, inline="R8_col")    
+
+type RangeConfig
+    float value
+    color bandColor
+    string labelTxt
+
+var array<RangeConfig> range_configs = array.new<RangeConfig>()
+var line[] proj_upper_lines = array.new_line(8, na) 
+var line[] proj_lower_lines = array.new_line(8, na) 
+
+// --- MODIFICATION START: Arrays to manage connecting lines and text labels for % text ---
+// These were already in your v1.0.1, ensuring they are present
+var line[]  label_connecting_lines_upper = array.new_line(8, na)
+var line[]  label_connecting_lines_lower = array.new_line(8, na)
+var label[] band_text_labels_upper = array.new_label(8, na)
+var label[] band_text_labels_lower = array.new_label(8, na)
+// --- MODIFICATION END ---
+
+
+if (array.size(range_configs) == 0) 
+    array.push(range_configs, RangeConfig.new(range1_val_input, range1_col_input, str.tostring(range1_val_input, "0.0") + "%"))
+    array.push(range_configs, RangeConfig.new(range2_val_input, range2_col_input, str.tostring(range2_val_input, "0.0") + "%"))
+    array.push(range_configs, RangeConfig.new(range3_val_input, range3_col_input, str.tostring(range3_val_input, "0.0") + "%"))
+    array.push(range_configs, RangeConfig.new(range4_val_input, range4_col_input, str.tostring(range4_val_input, "0.0") + "%"))
+    array.push(range_configs, RangeConfig.new(range5_val_input, range5_col_input, str.tostring(range5_val_input, "0.0") + "%"))
+    array.push(range_configs, RangeConfig.new(range6_val_input, range6_col_input, str.tostring(range6_val_input, "0.0") + "%"))
+    array.push(range_configs, RangeConfig.new(range7_val_input, range7_col_input, str.tostring(range7_val_input, "0.0") + "%"))
+    array.push(range_configs, RangeConfig.new(range8_val_input, range8_col_input, str.tostring(range8_val_input, "0.0") + "%"))
+
+f_pineStringToTextSize(strSize) =>
+    sz = size.small 
+    if strSize == "Tiny"
+        sz := size.tiny
+    else if strSize == "Small"
+        sz := size.small
+    else if strSize == "Normal"
+        sz := size.normal
+    else if strSize == "Large"
+        sz := size.large
+    else if strSize == "Huge"
+        sz := size.huge
+    sz 
+f_getCalculationBasePrice(source, length, type) => 
+    price = 0.0
+    if type == "SMA"
+        price := ta.sma(source, length)
+    else if type == "EMA"
+        price := ta.ema(source, length)
+    else if type == "WMA"
+        price := ta.wma(source, length)
+    else if type == "VWMA"
+        price := ta.vwma(source, length) 
+    else if type == "Median" 
+        price := ta.median(source, length)
+    else if type == "MidPoint" 
+        hi = ta.highest(high, length) 
+        lo = ta.lowest(low, length)
+        price := (hi + lo) / 2
+    else if type == "HMA" 
+        price := ta.hma(source, length)
+    else if type == "RMA" 
+        price := ta.rma(source, length)
+    else if type == "Displaced Source" 
+        price := source[length] 
+    else 
+        price := ta.sma(source, length)
+    price
+
+var float[] all_returns = array.new_float(0) 
+n_period_return = bar_index >= sampling_length ? (price_source / price_source[sampling_length]) - 1 : na
+current_return = n_period_return 
+if (not na(current_return))
+    array.push(all_returns, current_return)
+if (array.size(all_returns) > PRACTICAL_ARRAY_MAX_LEN)
+    array.shift(all_returns)
+calculation_base_price = f_getCalculationBasePrice(price_source, sampling_length, anchor_ma_type)
+median_historical_return = array.size(all_returns) >= 2 ? array.percentile_linear_interpolation(all_returns, 50) : 0.0
+plotted_median_line = calculation_base_price * (1 + median_historical_return)
+plot(range_plot_on ? plotted_median_line : na, title="Plotted Median Line", color=median_plot_color, linewidth=1)
+actual_text_size = f_pineStringToTextSize(text_size_scale)
+upper_band_levels = array.new_float(8, na)
+lower_band_levels = array.new_float(8, na)
+bool can_calc_bands = range_plot_on and array.size(all_returns) >= 2 and not na(calculation_base_price) and array.size(range_configs) == 8 and not na(current_return) 
+if can_calc_bands
+    for i = 0 to 7 
+        current_config = array.get(range_configs, i) 
+        range_val = current_config.value 
+        lower_percentile_q = 50 - (range_val / 2) 
+        upper_percentile_q = 50 + (range_val / 2)
+        return_lower_limit = array.percentile_linear_interpolation(all_returns, lower_percentile_q)
+        return_upper_limit = array.percentile_linear_interpolation(all_returns, upper_percentile_q)
+        if not na(return_lower_limit)
+            array.set(lower_band_levels, i, calculation_base_price * (1 + return_lower_limit))
+        if not na(return_upper_limit)
+            array.set(upper_band_levels, i, calculation_base_price * (1 + return_upper_limit))
+
+f_getLevel(levels_array, index) => array.size(levels_array) > index and can_calc_bands ? array.get(levels_array, index) : na
+f_getConfig(config_array, index) => array.size(config_array) == 8 and can_calc_bands ? array.get(config_array, index) : na 
+bool show_bands_gl = range_plot_on and can_calc_bands
+
+// --- Plotting Band Lines (Unrolled) ---
+// (This section is from your v1.0.1 base and is assumed correct)
+cfg1 = f_getConfig(range_configs, 0)
+u1_val = f_getLevel(upper_band_levels, 0)
+l1_val = f_getLevel(lower_band_levels, 0)
+plot_u1 = plot(show_bands_gl and not na(cfg1) ? u1_val : na, title="Upper Band 1", color=color.new(na(cfg1) ? color.gray : cfg1.bandColor, line_transparency_plot), linewidth=1)
+plot_l1 = plot(show_bands_gl and not na(cfg1) ? l1_val : na, title="Lower Band 1", color=color.new(na(cfg1) ? color.gray : cfg1.bandColor, line_transparency_plot), linewidth=1)
+
+cfg2 = f_getConfig(range_configs, 1)
+u2_val = f_getLevel(upper_band_levels, 1)
+l2_val = f_getLevel(lower_band_levels, 1)
+plot_u2 = plot(show_bands_gl and not na(cfg2) ? u2_val : na, title="Upper Band 2", color=color.new(na(cfg2) ? color.gray : cfg2.bandColor, line_transparency_plot), linewidth=1)
+plot_l2 = plot(show_bands_gl and not na(cfg2) ? l2_val : na, title="Lower Band 2", color=color.new(na(cfg2) ? color.gray : cfg2.bandColor, line_transparency_plot), linewidth=1)
+
+cfg3 = f_getConfig(range_configs, 2)
+u3_val = f_getLevel(upper_band_levels, 2)
+l3_val = f_getLevel(lower_band_levels, 2)
+plot_u3 = plot(show_bands_gl and not na(cfg3) ? u3_val : na, title="Upper Band 3", color=color.new(na(cfg3) ? color.gray : cfg3.bandColor, line_transparency_plot), linewidth=1)
+plot_l3 = plot(show_bands_gl and not na(cfg3) ? l3_val : na, title="Lower Band 3", color=color.new(na(cfg3) ? color.gray : cfg3.bandColor, line_transparency_plot), linewidth=1)
+
+cfg4 = f_getConfig(range_configs, 3)
+u4_val = f_getLevel(upper_band_levels, 3)
+l4_val = f_getLevel(lower_band_levels, 3)
+plot_u4 = plot(show_bands_gl and not na(cfg4) ? u4_val : na, title="Upper Band 4", color=color.new(na(cfg4) ? color.gray : cfg4.bandColor, line_transparency_plot), linewidth=1)
+plot_l4 = plot(show_bands_gl and not na(cfg4) ? l4_val : na, title="Lower Band 4", color=color.new(na(cfg4) ? color.gray : cfg4.bandColor, line_transparency_plot), linewidth=1)
+
+cfg5 = f_getConfig(range_configs, 4)
+u5_val = f_getLevel(upper_band_levels, 4)
+l5_val = f_getLevel(lower_band_levels, 4)
+plot_u5 = plot(show_bands_gl and not na(cfg5) ? u5_val : na, title="Upper Band 5", color=color.new(na(cfg5) ? color.gray : cfg5.bandColor, line_transparency_plot), linewidth=1)
+plot_l5 = plot(show_bands_gl and not na(cfg5) ? l5_val : na, title="Lower Band 5", color=color.new(na(cfg5) ? color.gray : cfg5.bandColor, line_transparency_plot), linewidth=1)
+
+cfg6 = f_getConfig(range_configs, 5)
+u6_val = f_getLevel(upper_band_levels, 5)
+l6_val = f_getLevel(lower_band_levels, 5)
+plot_u6 = plot(show_bands_gl and not na(cfg6) ? u6_val : na, title="Upper Band 6", color=color.new(na(cfg6) ? color.gray : cfg6.bandColor, line_transparency_plot), linewidth=1)
+plot_l6 = plot(show_bands_gl and not na(cfg6) ? l6_val : na, title="Lower Band 6", color=color.new(na(cfg6) ? color.gray : cfg6.bandColor, line_transparency_plot), linewidth=1)
+
+cfg7 = f_getConfig(range_configs, 6)
+u7_val = f_getLevel(upper_band_levels, 6)
+l7_val = f_getLevel(lower_band_levels, 6)
+plot_u7 = plot(show_bands_gl and not na(cfg7) ? u7_val : na, title="Upper Band 7", color=color.new(na(cfg7) ? color.gray : cfg7.bandColor, line_transparency_plot), linewidth=1)
+plot_l7 = plot(show_bands_gl and not na(cfg7) ? l7_val : na, title="Lower Band 7", color=color.new(na(cfg7) ? color.gray : cfg7.bandColor, line_transparency_plot), linewidth=1)
+
+cfg8 = f_getConfig(range_configs, 7)
+u8_val = f_getLevel(upper_band_levels, 7)
+l8_val = f_getLevel(lower_band_levels, 7)
+plot_u8 = plot(show_bands_gl and not na(cfg8) ? u8_val : na, title="Upper Band 8", color=color.new(na(cfg8) ? color.gray : cfg8.bandColor, line_transparency_plot), linewidth=1)
+plot_l8 = plot(show_bands_gl and not na(cfg8) ? l8_val : na, title="Lower Band 8", color=color.new(na(cfg8) ? color.gray : cfg8.bandColor, line_transparency_plot), linewidth=1)
+
+// --- Plotting Fills (Layered) ---
+// (This section is from your v1.0.1 base and is assumed correct)
+cfg1_fill = f_getConfig(range_configs, 0)
+fill_color_r1 = color.new(na(cfg1_fill) ? na : cfg1_fill.bandColor, fill_transparency_plot)
+fill(plot_u1, plot_l1, color = show_bands_gl and fill_on and not na(cfg1_fill) ? fill_color_r1 : na, title="Fill Range 1")
+
+cfg2_fill = f_getConfig(range_configs, 1)
+fill_color_r2 = color.new(na(cfg2_fill) ? na : cfg2_fill.bandColor, fill_transparency_plot)
+fill(plot_u2, plot_l2, color = show_bands_gl and fill_on and not na(cfg2_fill) ? fill_color_r2 : na, title="Fill Range 2")
+
+cfg3_fill = f_getConfig(range_configs, 2)
+fill_color_r3 = color.new(na(cfg3_fill) ? na : cfg3_fill.bandColor, fill_transparency_plot)
+fill(plot_u3, plot_l3, color = show_bands_gl and fill_on and not na(cfg3_fill) ? fill_color_r3 : na, title="Fill Range 3")
+
+cfg4_fill = f_getConfig(range_configs, 3)
+fill_color_r4 = color.new(na(cfg4_fill) ? na : cfg4_fill.bandColor, fill_transparency_plot)
+fill(plot_u4, plot_l4, color = show_bands_gl and fill_on and not na(cfg4_fill) ? fill_color_r4 : na, title="Fill Range 4")
+
+cfg5_fill = f_getConfig(range_configs, 4)
+fill_color_r5 = color.new(na(cfg5_fill) ? na : cfg5_fill.bandColor, fill_transparency_plot)
+fill(plot_u5, plot_l5, color = show_bands_gl and fill_on and not na(cfg5_fill) ? fill_color_r5 : na, title="Fill Range 5")
+
+cfg6_fill = f_getConfig(range_configs, 5)
+fill_color_r6 = color.new(na(cfg6_fill) ? na : cfg6_fill.bandColor, fill_transparency_plot)
+fill(plot_u6, plot_l6, color = show_bands_gl and fill_on and not na(cfg6_fill) ? fill_color_r6 : na, title="Fill Range 6")
+
+cfg7_fill = f_getConfig(range_configs, 6)
+fill_color_r7 = color.new(na(cfg7_fill) ? na : cfg7_fill.bandColor, fill_transparency_plot)
+fill(plot_u7, plot_l7, color = show_bands_gl and fill_on and not na(cfg7_fill) ? fill_color_r7 : na, title="Fill Range 7")
+
+cfg8_fill = f_getConfig(range_configs, 7) 
+fill_color_r8 = color.new(na(cfg8_fill) ? na : cfg8_fill.bandColor, fill_transparency_plot)
+fill(plot_u8, plot_l8, color = show_bands_gl and fill_on and not na(cfg8_fill) ? fill_color_r8 : na, title="Fill Range 8")
+
+// --- Band Projection & MODIFIED Labels Loop ---
+if array.size(range_configs) == 8 
+    for i = 0 to 7
+        current_cfg_loop = f_getConfig(range_configs, i) 
+        u_level_loop = f_getLevel(upper_band_levels, i)
+        l_level_loop = f_getLevel(lower_band_levels, i)
+        
+        if not na(current_cfg_loop) 
+            band_color_loop = current_cfg_loop.bandColor
+            text_label_str_loop = current_cfg_loop.labelTxt
+            line_color_for_drawings = color.new(band_color_loop, line_transparency_plot) 
+
+            // Manage Projection Lines 
+            if enable_projection_input and show_bands_gl 
+                old_u_line_proj = array.get(proj_upper_lines, i)
+                if not na(old_u_line_proj)
+                    line.delete(old_u_line_proj)
+                if not na(u_level_loop) and barstate.islastconfirmedhistory 
+                    array.set(proj_upper_lines, i, line.new(bar_index, u_level_loop, bar_index + projection_length_input, u_level_loop, xloc.bar_index, extend.none, line_color_for_drawings, line.style_dashed, 1))
+                
+                old_l_line_proj = array.get(proj_lower_lines, i)
+                if not na(old_l_line_proj)
+                    line.delete(old_l_line_proj)
+                if not na(l_level_loop) and barstate.islastconfirmedhistory 
+                    array.set(proj_lower_lines, i, line.new(bar_index, l_level_loop, bar_index + projection_length_input, l_level_loop, xloc.bar_index, extend.none, line_color_for_drawings, line.style_dashed, 1))
+            else 
+                old_u_line_to_del = array.get(proj_upper_lines, i)
+                if not na(old_u_line_to_del)
+                    line.delete(old_u_line_to_del)        
+                    array.set(proj_upper_lines, i, na)    
+
+                old_l_line_to_del = array.get(proj_lower_lines, i)
+                if not na(old_l_line_to_del)
+                    line.delete(old_l_line_to_del)        
+                    array.set(proj_lower_lines, i, na)    
+            
+            // --- MODIFICATION START: Text Labels with Connecting Lines ---
+            // Delete old connecting lines and labels first for this band index 'i'
+            old_conn_u_id = array.get(label_connecting_lines_upper, i)
+            if not na(old_conn_u_id)
+                line.delete(old_conn_u_id)
+                array.set(label_connecting_lines_upper, i, na) 
+
+            old_label_u_id = array.get(band_text_labels_upper, i)
+            if not na(old_label_u_id)
+                label.delete(old_label_u_id)
+                array.set(band_text_labels_upper, i, na) 
+
+            old_conn_l_id = array.get(label_connecting_lines_lower, i)
+            if not na(old_conn_l_id)
+                line.delete(old_conn_l_id)
+                array.set(label_connecting_lines_lower, i, na) 
+            
+            old_label_l_id = array.get(band_text_labels_lower, i)
+            if not na(old_label_l_id)
+                label.delete(old_label_l_id)
+                array.set(band_text_labels_lower, i, na) 
+
+            // Now draw new connecting lines and labels if conditions are met
+            // CORRECTED: Using barstate.islast for consistent label visibility
+            if show_bands_gl and text_on and barstate.islast and not na(calculation_base_price) 
+                label_x_start_conn = bar_index 
+                label_x_end_conn_and_text = bar_index + label_offset_input 
+                
+                if not na(u_level_loop)
+                    conn_u_id_new = line.new(x1=label_x_start_conn, y1=u_level_loop, x2=label_x_end_conn_and_text, y2=u_level_loop, 
+                                              xloc=xloc.bar_index, extend=extend.none, color=line_color_for_drawings, style=line.style_solid, width=1)
+                    array.set(label_connecting_lines_upper, i, conn_u_id_new)
+                    
+                    label_u_id_new = label.new(x=label_x_end_conn_and_text, y=u_level_loop, text=text_label_str_loop, 
+                                              xloc=xloc.bar_index, style=label.style_label_left, 
+                                              color=color(na), textcolor=text_color_scale, size=actual_text_size)
+                    array.set(band_text_labels_upper, i, label_u_id_new)
+                
+                if not na(l_level_loop)
+                    conn_l_id_new = line.new(x1=label_x_start_conn, y1=l_level_loop, x2=label_x_end_conn_and_text, y2=l_level_loop, 
+                                              xloc=xloc.bar_index, extend=extend.none, color=line_color_for_drawings, style=line.style_solid, width=1)
+                    array.set(label_connecting_lines_lower, i, conn_l_id_new)
+
+                    label_l_id_new = label.new(x=label_x_end_conn_and_text, y=l_level_loop, text=text_label_str_loop, 
+                                              xloc=xloc.bar_index, style=label.style_label_left, 
+                                              color=color(na), textcolor=text_color_scale, size=actual_text_size)
+                    array.set(band_text_labels_lower, i, label_l_id_new)
+            // --- MODIFICATION END ---
