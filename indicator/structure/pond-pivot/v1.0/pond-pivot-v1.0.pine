@@ -1,0 +1,108 @@
+//@version=6
+indicator("Pond Lazy Pivot v1.1", overlay=true)
+
+// ─── INPUTS ─────────────────────────────────────
+show1   = input.bool(true,  "Show Pivot Set 1",  group="Pivot Set 1")
+len1    = input.int(1,      "Look-back Length 1", minval=1, group="Pivot Set 1")
+col1Lo  = input.color(#71C8FF, "Set 1 Low-line",  group="Pivot Set 1")
+col1Hi  = input.color(#FFC26E, "Set 1 High-line", group="Pivot Set 1")
+
+show2   = input.bool(false, "Show Pivot Set 2",  group="Pivot Set 2")
+len2    = input.int(3,      "Look-back Length 2", minval=1, group="Pivot Set 2")
+col2Lo  = input.color(#71C8FF, "Set 2 Low-line",  group="Pivot Set 2")
+col2Hi  = input.color(#FFC26E, "Set 2 High-line", group="Pivot Set 2")
+
+show3   = input.bool(false, "Show Pivot Set 3",  group="Pivot Set 3")
+len3    = input.int(5,      "Look-back Length 3", minval=1, group="Pivot Set 3")
+col3Lo  = input.color(#71C8FF, "Set 3 Low-line",  group="Pivot Set 3")
+col3Hi  = input.color(#FFC26E, "Set 3 High-line", group="Pivot Set 3")
+
+// ─── SET 1 STATE & LOGIC ───────────────────────
+var float lp1 = na
+var line  ll1 = na
+var float hp1 = na
+var line  hl1 = na
+
+if not show1
+    if not na(lp1)
+        line.delete(ll1)
+        lp1 := na
+    if not na(hp1)
+        line.delete(hl1)
+        hp1 := na
+else
+    if not na(ta.pivotlow(low, len1, len1))
+        lp1 := low[len1]
+        line.delete(ll1)
+        ll1 := line.new(bar_index-len1, lp1, bar_index, lp1, extend=extend.right, color=col1Lo, width=2)
+    else if not na(lp1) and close < lp1
+        line.delete(ll1)
+        lp1 := na
+
+    if not na(ta.pivothigh(high, len1, len1))
+        hp1 := high[len1]
+        line.delete(hl1)
+        hl1 := line.new(bar_index-len1, hp1, bar_index, hp1, extend=extend.right, color=col1Hi, width=2)
+    else if not na(hp1) and close > hp1
+        line.delete(hl1)
+        hp1 := na
+
+// ─── SET 2 STATE & LOGIC ───────────────────────
+var float lp2 = na
+var line  ll2 = na
+var float hp2 = na
+var line  hl2 = na
+
+if not show2
+    if not na(lp2)
+        line.delete(ll2)
+        lp2 := na
+    if not na(hp2)
+        line.delete(hl2)
+        hp2 := na
+else
+    if not na(ta.pivotlow(low, len2, len2))
+        lp2 := low[len2]
+        line.delete(ll2)
+        ll2 := line.new(bar_index-len2, lp2, bar_index, lp2, extend=extend.right, color=col2Lo, width=2)
+    else if not na(lp2) and close < lp2
+        line.delete(ll2)
+        lp2 := na
+
+    if not na(ta.pivothigh(high, len2, len2))
+        hp2 := high[len2]
+        line.delete(hl2)
+        hl2 := line.new(bar_index-len2, hp2, bar_index, hp2, extend=extend.right, color=col2Hi, width=2)
+    else if not na(hp2) and close > hp2
+        line.delete(hl2)
+        hp2 := na
+
+// ─── SET 3 STATE & LOGIC ───────────────────────
+var float lp3 = na
+var line  ll3 = na
+var float hp3 = na
+var line  hl3 = na
+
+if not show3
+    if not na(lp3)
+        line.delete(ll3)
+        lp3 := na
+    if not na(hp3)
+        line.delete(hl3)
+        hp3 := na
+else
+    if not na(ta.pivotlow(low, len3, len3))
+        lp3 := low[len3]
+        line.delete(ll3)
+        ll3 := line.new(bar_index-len3, lp3, bar_index, lp3, extend=extend.right, color=col3Lo, width=2)
+    else if not na(lp3) and close < lp3
+        line.delete(ll3)
+        lp3 := na
+
+    if not na(ta.pivothigh(high, len3, len3))
+        hp3 := high[len3]
+        line.delete(hl3)
+        hl3 := line.new(bar_index-len3, hp3, bar_index, hp3, extend=extend.right, color=col3Hi, width=2)
+    else if not na(hp3) and close > hp3
+        line.delete(hl3)
+        hp3 := na
