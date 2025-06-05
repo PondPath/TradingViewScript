@@ -1,0 +1,86 @@
+// @version=6
+indicator("Pond BBWP", shorttitle="Pond BBWP", overlay=false, format=format.percent, precision=2, max_bars_back=1000)
+
+// ───────── BBWP SETTINGS ─────────
+groupBB      = "BBWP Settings"
+src          = input.source(close,        "Price Source",       group=groupBB)
+basisType    = input.string("SMA",       "Basis MA Type",
+                         options=["SMA","EMA","WMA","RMA","HMA","VWMA"],
+                         group=groupBB)
+bbwLen       = input.int(13,             "BBW Length",         minval=1, group=groupBB)
+lookback     = input.int(252,            "Percentile Length",  minval=1, group=groupBB)
+smoothLenBB  = input.int(3,              "BBWP Smooth Length", minval=1, group=groupBB)
+smoothTypeBB = input.string("SMA",     "BBWP Smooth Type",
+                         options=["SMA","EMA","WMA","RMA"], group=groupBB)
+
+// ───────── COLOR SETTINGS ─────────
+groupC       = "Color Settings"
+colorType    = input.string("Spectrum", "Line Colour Type",
+                         options=["Spectrum","Solid"], group=groupC)
+solidCol     = input.color(#2962FF,      "Solid Line Colour",       group=groupC)
+gradLow      = input.color(#00BCD4,      "Spectrum Low Colour",     group=groupC)
+gradHigh     = input.color(#FF1744,      "Spectrum High Colour",    group=groupC)
+extHighC     = input.color(#FF5252,      "Extreme-High Bar Colour", group=groupC)
+extLowC      = input.color(#00FF99,      "Extreme-Low Bar Colour",  group=groupC)
+lineW        = input.int(2,              "Line Width",             minval=1, maxval=4, group=groupC)
+
+// ───────── LEVEL SETTINGS ─────────
+groupL       = "Extreme Levels"
+upperLvl     = input.int(98,             "Extreme-High %",         minval=1, maxval=100, group=groupL)
+lowerLvl     = input.int(2,              "Extreme-Low %",          minval=0, maxval=99,  group=groupL)
+showBars     = input.bool(true,          "Show Extreme Bars",      group=groupL)
+
+// ───────── MA OVERLAY SETTINGS ─────────
+groupMA      = "BBWP-Pane Moving Averages"
+ma1On        = input.bool(true,          "Show MA 1",             group=groupMA, inline="m1")
+ma1Type      = input.string("SMA",     "MA 1 Type",
+                         options=["SMA","EMA","WMA","RMA","HMA","VWMA"], group=groupMA, inline="m1")
+ma1Len       = input.int(5,              "MA 1 Length",           minval=1, group=groupMA, inline="m1")
+ma1Col       = input.color(#FFFFFF,      "MA 1 Colour",           group=groupMA, inline="m1")
+
+ma2On        = input.bool(false,         "Show MA 2",             group=groupMA, inline="m2")
+ma2Type      = input.string("SMA",     "MA 2 Type",
+                         options=["SMA","EMA","WMA","RMA","HMA","VWMA"], group=groupMA, inline="m2")
+ma2Len       = input.int(8,              "MA 2 Length",           minval=1, group=groupMA, inline="m2")
+ma2Col       = input.color(#00FFFF,      "MA 2 Colour",           group=groupMA, inline="m2")
+
+// ───────── HELPERS ─────────
+maSwitch(src,len,typ) => typ == "SMA" ? ta.sma(src,len) : typ == "EMA" ? ta.ema(src,len) : typ == "WMA" ? ta.wma(src,len) : typ == "RMA" ? ta.rma(src,len) : typ == "HMA" ? ta.hma(src,len) : ta.vwma(src,len)
+
+bbwpCalc(p, bbwL, pctL, typ) =>
+    basis = maSwitch(p, bbwL, typ)
+    dev   = ta.stdev(p, bbwL)
+    bbw   = (basis + dev - (basis - dev)) / basis
+    s     = 0.0
+    ln    = math.min(pctL, bar_index)
+    for i = 1 to ln
+        s += bbw[i] > bbw ? 0 : 1
+    bar_index >= bbwL ? (s / ln) * 100 : na
+
+gradClr(v) => color.from_gradient(v, 0, 100, gradLow, gradHigh)
+
+// ───────── CALCULATIONS ─────────
+valRaw = bbwpCalc(src, bbwLen, lookback, basisType)
+val     = smoothTypeBB == "SMA" ? ta.sma(valRaw, smoothLenBB) :
+          smoothTypeBB == "EMA" ? ta.ema(valRaw, smoothLenBB) :
+          smoothTypeBB == "WMA" ? ta.wma(valRaw, smoothLenBB) :
+          ta.rma(valRaw, smoothLenBB)
+barHi   = showBars and val >= upperLvl ? val : na
+barLo   = showBars and val <= lowerLvl ? val : na
+ma1Val  = ma1On ? maSwitch(val, ma1Len, ma1Type) : na
+ma2Val  = ma2On ? maSwitch(val, ma2Len, ma2Type) : na
+
+// ───────── PLOTS ─────────
+hline(100, "", color.new(#FFFFFF, 80))
+hline(50,  "", color.new(#FFFFFF, 90), hline.style_dashed)
+hline(0,   "", color.new(#FFFFFF, 80))
+
+plot(val, "BBWP", color = colorType == "Solid" ? solidCol : gradClr(val), linewidth = lineW)
+plot(barHi, "Extreme-High", color=extHighC, style=plot.style_columns, histbase=0)
+plot(barLo, "Extreme-Low",  color=extLowC,  style=plot.style_columns, histbase=100)
+plot(ma1Val, "MA 1", color=ma1Col, linewidth=1)
+plot(ma2Val, "MA 2", color=ma2Col, linewidth=1)
+
+// ───────── ALERTS ─────────
+alertcondition(ta.crossover(val, upperLvl), title="P-BBWP > High", message="BBWP crossed above High")
+alertcondition(ta.crossunder(val, lowerLvl), title="P-BBWP < Low",  message="BBWP crossed below Low")
