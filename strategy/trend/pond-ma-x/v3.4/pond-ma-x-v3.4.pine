@@ -1,0 +1,232 @@
+//@version=6
+// Pond MA X v3.4 - ADX & ATR Filters + Advanced Exits + Kaufman Efficiency Ratio
+strategy(title="Pond MA X v3.4 - ADX & ATR Filters + Advanced Exits", shorttitle="Pond MA X v3.4", overlay=true, initial_capital=10000, default_qty_type=strategy.cash, default_qty_value=10000, commission_type=strategy.commission.percent, commission_value=0.1, calc_on_every_tick=true)
+
+//==============================================================================
+// Core MAs Inputs
+//==============================================================================
+src               = input.source(close, "Price Source", group="Core MAs", tooltip="Price source for MA calculations (e.g., close, high, low).")
+ma1Len            = input.int(9,       "MA 1 Length",   minval=1, group="Core MAs", tooltip="Lookback period for the faster moving average.")
+ma1Type           = input.string("EMA","MA 1 Type",     options=["SMA","EMA","WMA","RMA","HMA","LSMA"], group="Core MAs", tooltip="Type of moving average for MA 1.")
+ma2Len            = input.int(21,      "MA 2 Length",   minval=1, group="Core MAs", tooltip="Lookback period for the slower moving average.")
+ma2Type           = input.string("EMA","MA 2 Type",     options=["SMA","EMA","WMA","RMA","HMA","LSMA"], group="Core MAs", tooltip="Type of moving average for MA 2.")
+
+// === MA Helper ===
+f_getMA(_s,_l,_t) =>
+    val = switch _t
+        "SMA"  => ta.sma(_s, _l)
+        "EMA"  => ta.ema(_s, _l)
+        "WMA"  => ta.wma(_s, _l)
+        "RMA"  => ta.rma(_s, _l)
+        "HMA"  => ta.hma(_s, _l)
+        "LSMA" => ta.linreg(_s, _l, 0)
+        => na
+    val
+
+ma1 = f_getMA(src, ma1Len, ma1Type)
+ma2 = f_getMA(src, ma2Len, ma2Type)
+
+//==============================================================================
+// General Filters (Apply to both Entry & Exit Contexts)
+//==============================================================================
+
+// ADX Filter
+adxOn             = input.bool(false, "Enable ADX Filter", group="Filters › ADX", tooltip="Enable/disable the Average Directional Index (ADX) filter.")
+adxLen            = input.int(14,    "ADX Length", minval=1, group="Filters › ADX", tooltip="Lookback period for ADX calculation.")
+adxThr            = input.int(25,    "ADX Threshold", minval=1, group="Filters › ADX", tooltip="Minimum ADX value for a trend to be considered strong enough for entry.")
+adxCol            = input.color(color.rgb(255,127,14), "ADX Color", group="Filters › ADX")
+[diPlus, diMinus, adxVal] = ta.dmi(adxLen, adxLen) 
+
+// ATR Filter
+atrOn             = input.bool(false, "Enable ATR Filter", group="Filters › ATR", tooltip="Enable/disable the Average True Range (ATR) filter.")
+atrLen            = input.int(14,    "ATR Length", minval=1, group="Filters › ATR", tooltip="Lookback period for ATR calculation.")
+atrPctThr         = input.float(1.0, "Min ATR % of Price", minval=0.0, step=0.1, group="Filters › ATR", tooltip="Minimum ATR as a percentage of price. Helps avoid low volatility periods.")
+atrCol            = input.color(color.rgb(31,119,180), "ATR % Color", group="Filters › ATR")
+atrPct            = ta.atr(atrLen) / src * 100 
+
+// Kaufman Efficiency Ratio (KER) Filter (New)
+kerOn             = input.bool(false, "Enable KER Filter", group="Filters › Efficiency Ratio", tooltip="Enable/disable the Kaufman Efficiency Ratio filter.")
+kerLen            = input.int(10,    "KER Length", minval=1, group="Filters › Efficiency Ratio", tooltip="Lookback period for Kaufman Efficiency Ratio calculation.")
+kerThr            = input.float(0.5, "KER Threshold", minval=0.0, maxval=1.0, step=0.01, group="Filters › Efficiency Ratio", tooltip="Minimum KER value for market efficiency. Below this, trades are prevented.")
+
+// KER Calculation
+var float kerVal = na
+float ker_change    = math.abs(close - close[kerLen])
+float ker_volatility = math.sum(math.abs(close - close[1]), kerLen)
+kerVal := ker_volatility != 0 ? ker_change / ker_volatility : 0 // Avoid division by zero, set to 0 if no volatility
+
+
+//==============================================================================
+// Entry Filters
+//==============================================================================
+
+// MA Confirmation Filter
+extraOn           = input.bool(false,"Enable Extra MA Filter",group="Entry Filters › MA Confirmation", tooltip="Enable/disable an additional MA filter for entry confirmation.")
+extraLen          = input.int(50,    "Extra MA Length",       minval=1, group="Entry Filters › MA Confirmation", tooltip="Lookback period for the Extra MA.")
+extraType         = input.string("EMA","Extra MA Type",       options=["SMA","EMA","WMA","RMA","HMA","LSMA"], group="Entry Filters › MA Confirmation", tooltip="Type of moving average for the Extra MA.")
+extraMA           = extraOn ? f_getMA(src, extraLen, extraType) : na
+
+// Higher Timeframe (HTF) MA Filter
+htfOn             = input.bool(false,"Enable HTF MA Filter", group="Entry Filters › MA Confirmation", tooltip="Enable/disable a Higher Timeframe MA filter for trend alignment.")
+htfTF             = input.timeframe("D","Higher TF",          group="Entry Filters › MA Confirmation", tooltip="Timeframe for the Higher Timeframe MA (e.g., 'D' for daily, 'W' for weekly).")
+htfLen            = input.int(50,    "HTF MA Length",         minval=1, group="Entry Filters › MA Confirmation", tooltip="Lookback period for the HTF MA.")
+htfType           = input.string("EMA","HTF MA Type",         options=["SMA","EMA","WMA","RMA","HMA","LSMA"], group="Entry Filters › MA Confirmation", tooltip="Type of moving average for the HTF MA.")
+htfRaw            = request.security(syminfo.tickerid, htfTF, f_getMA(src, htfLen, htfType), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+htfMA             = htfOn ? htfRaw : na
+
+// Day of Week Filter
+allowMon          = input.bool(true,"Mon",group="Entry Filters › Days", tooltip="Allow entries on Monday.")
+allowTue          = input.bool(true,"Tue",group="Entry Filters › Days", tooltip="Allow entries on Tuesday.")
+allowWed          = input.bool(true,"Wed",group="Entry Filters › Days", tooltip="Allow entries on Wednesday.")
+allowThu          = input.bool(true,"Thu",group="Entry Filters › Days", tooltip="Allow entries on Thursday.")
+allowFri          = input.bool(true,"Fri",group="Entry Filters › Days", tooltip="Allow entries on Friday.")
+allowSat          = input.bool(true,"Sat",group="Entry Filters › Days", tooltip="Allow entries on Saturday.")
+allowSun          = input.bool(true,"Sun",group="Entry Filters › Days", tooltip="Allow entries on Sunday.")
+today             = dayofweek
+dayOK             = (today==dayofweek.monday    and allowMon) or (today==dayofweek.tuesday   and allowTue) or (today==dayofweek.wednesday and allowWed) or (today==dayofweek.thursday  and allowThu) or (today==dayofweek.friday    and allowFri) or (today==dayofweek.saturday  and allowSat) or (today==dayofweek.sunday    and allowSun)
+
+//==============================================================================
+// Exit Plans
+//==============================================================================
+
+// Risk Management Exits
+fixedSL_pct = input.float(2.0, "Fixed Stop Loss %", minval=0.1, step=0.1, group="Exit Plans › Risk Management", tooltip="Percentage of entry price for a fixed stop loss. (e.g., 2.0 = 2% loss)") / 100 // Convert to decimal
+
+// Profit Protection Exits
+atr_price_units = ta.atr(atrLen) // Get ATR directly in price units
+trailSL_atr_mult = input.float(3.0, "Trailing Stop Loss (ATR Mult)", minval=0.1, step=0.1, group="Exit Plans › Profit Protection", tooltip="Multiplier for Average True Range (ATR) to set the trailing stop distance.")
+trail_offset_points = atr_price_units * trailSL_atr_mult // Calculate fixed points distance
+
+// Trend Reversal Exits (These are already optional by default=false)
+exitExtra         = input.bool(false,"Exit on Extra MA Breach",group="Exit Plans › Trend Reversal", tooltip="If enabled, closes position if price falls below the Extra MA.")
+exitHTF           = input.bool(false,"Exit on HTF MA Breach",  group="Exit Plans › Trend Reversal", tooltip="If enabled, closes position if price falls below the Higher Timeframe MA.")
+
+// Conditional Exit Filter (Robust Version)
+enableConditionalExit = input.bool(false, "Enable Conditional Exit", group="Exit Plans › Conditional Exit", tooltip="Enable/disable advanced conditional exits.")
+exitAfterBars         = input.int(3, "Exit After X Bars", minval=1, group="Exit Plans › Conditional Exit", tooltip="Exit if trade open for at least this many bars.")
+
+// Profit Conditions
+enableExitIfProfitAbove = input.bool(false, "Exit If Profit % >", group="Exit Plans › Conditional Exit › Profit", tooltip="Enable exit if profit percentage is above threshold.")
+exitProfitAboveValue    = input.float(5.0, "  Profit % (High)", minval=0.0, step=0.1, group="Exit Plans › Conditional Exit › Profit", tooltip="Exit if current profit % is higher than this value.")
+enableExitIfProfitBelow = input.bool(false, "Exit If Profit % <", group="Exit Plans › Conditional Exit › Profit", tooltip="Enable exit if profit percentage is below threshold (e.g., for loss cutting or protecting small gains).")
+exitProfitBelowValue    = input.float(3.0, "  Profit % (Low)", minval=-100.0, step=0.1, group="Exit Plans › Conditional Exit › Profit", tooltip="Exit if current profit % is lower than this value.")
+
+// ADX Conditions
+enableExitIfADXAbove = input.bool(false, "Exit If ADX >", group="Exit Plans › Conditional Exit › ADX", tooltip="Enable exit if ADX is above threshold (trend weakening/strengthening).")
+exitADXAboveValue    = input.float(40.0, "  ADX (High)", minval=0.0, step=0.1, group="Exit Plans › Conditional Exit › ADX", tooltip="Exit if ADX is higher than this value.")
+enableExitIfADXBelow = input.bool(false, "Exit If ADX <", group="Exit Plans › Conditional Exit › ADX", tooltip="Enable exit if ADX is below threshold (trend fading).")
+exitADXBelowValue    = input.float(20.0, "  ADX (Low)", minval=0.0, step=0.1, group="Exit Plans › Conditional Exit › ADX", tooltip="Exit if ADX is lower than this value.")
+
+// ATR Conditions
+enableExitIfATRAbove = input.bool(false, "Exit If ATR % >", group="Exit Plans › Conditional Exit › ATR", tooltip="Enable exit if ATR % is above threshold (high volatility).")
+exitATRAboveValue    = input.float(5.0, "  ATR % (High)", minval=0.0, step=0.1, group="Exit Plans › Conditional Exit › ATR", tooltip="Exit if current ATR % is higher than this value.")
+enableExitIfATRBelow = input.bool(false, "Exit If ATR % <", group="Exit Plans › Conditional Exit › ATR", tooltip="Enable exit if ATR % is below threshold (low volatility).")
+exitATRBelowValue    = input.float(1.0, "  ATR % (Low)", minval=0.0, step=0.1, group="Exit Plans › Conditional Exit › ATR", tooltip="Exit if current ATR % is lower than this value.")
+
+// --- Force relevant input values to be series floats right after their declaration ---
+var float _exitProfitAboveValue = exitProfitAboveValue
+var float _exitProfitBelowValue = exitProfitBelowValue
+var float _exitADXAboveValue    = exitADXAboveValue
+var float _exitADXBelowValue    = exitADXBelowValue
+var float _exitATRAboveValue    = exitATRAboveValue
+var float _exitATRBelowValue    = exitATRBelowValue
+
+// Store entry bar index here (var declaration means it's initialized once)
+var int lastEntryBarIndex = na
+
+var float fixedStopLossLevel = na 
+var float trailingStopLossLevel = na 
+
+// === Entry Logic (Updated with KER filter) ===
+enterable = ta.crossover(ma1, ma2) and  // Adjusted multi-line logic
+          (not extraOn or src > extraMA) and 
+          (not htfOn or src > htfMA) and 
+          (not adxOn or adxVal > adxThr) and 
+          (not atrOn or atrPct > atrPctThr) and 
+          (not kerOn or kerVal >= kerThr) and // KER filter added here
+          dayOK
+
+// === Exit Logic ===
+exitable = ta.crossunder(ma1, ma2) or (exitExtra and src<extraMA) or (exitHTF and src<htfMA)
+
+if enterable
+    strategy.entry("Long",strategy.long)
+    lastEntryBarIndex := bar_index // Store the current bar index when a trade is entered
+    fixedStopLossLevel := strategy.position_avg_price * (1 - fixedSL_pct) // Use strategy.position_avg_price
+    trailingStopLossLevel := strategy.position_avg_price - trail_offset_points // Use strategy.position_avg_price
+
+if exitable
+    strategy.close("Long")
+
+if strategy.position_size > 0 // Only apply if a long position is open
+    trailingStopLossLevel := math.max(trailingStopLossLevel, high - trail_offset_points) 
+
+    if not na(fixedStopLossLevel)
+        strategy.exit("Long Fixed SL", from_entry="Long", stop=fixedStopLossLevel)
+    
+    if not na(trailingStopLossLevel)
+        strategy.exit("Long Trail SL", from_entry="Long", stop=trailingStopLossLevel)
+    
+    // --- Conditional Exit Logic ---
+    if enableConditionalExit 
+        barsInTrade = bar_index - lastEntryBarIndex 
+        
+        float currentProfitPercent = na
+        float currentADXVal = adxVal
+        float currentATRPct = atrPct
+        
+        // Calculate profit percentage using strategy.position_avg_price
+        // Current value of position - Entry value of position / Entry value of position * 100
+        currentProfit = (close - strategy.position_avg_price) / strategy.position_avg_price * 100 // This is the profit percentage directly
+        currentProfitPercent := currentProfit // Assign to currentProfitPercent for consistency with other types
+        
+        bool timeConditionMet = barsInTrade >= exitAfterBars
+        bool specificValueConditionMet = false 
+        
+        if timeConditionMet 
+            if enableExitIfProfitAbove and not na(currentProfitPercent)
+                if currentProfitPercent > _exitProfitAboveValue 
+                    specificValueConditionMet := true
+            if enableExitIfProfitBelow and not na(currentProfitPercent)
+                if currentProfitPercent < _exitProfitBelowValue 
+                    specificValueConditionMet := true
+            
+            if enableExitIfADXAbove and not na(currentADXVal)
+                if currentADXVal > _exitADXAboveValue 
+                    specificValueConditionMet := true
+            if enableExitIfADXBelow and not na(currentADXVal)
+                if currentADXVal < _exitADXBelowValue 
+                    specificValueConditionMet := true
+                    
+            if enableExitIfATRAbove and not na(currentATRPct)
+                if currentATRPct > _exitATRAboveValue 
+                    specificValueConditionMet := true
+            if enableExitIfATRBelow and not na(currentATRPct)
+                if currentATRPct < _exitATRBelowValue 
+                    specificValueConditionMet := true
+
+        if timeConditionMet and specificValueConditionMet
+            strategy.close("Long", "Conditional Exit")
+
+
+//==============================================================================
+// Style (Plotting Colors and Opacity)
+//==============================================================================
+ma1Color          = input.color(color.rgb(255,127,14),"MA 1 Color",        group="Style", tooltip="Color for the faster moving average line.")
+ma2Color          = input.color(color.rgb(31,119,180),"MA 2 Color",        group="Style", tooltip="Color for the slower moving average line.")
+opacity           = input.int(50,"Ribbon Opacity (%)",minval=0,maxval=100,group="Style", tooltip="Transparency of the colored area between MA1 and MA2.")
+ribbonBull        = color.new(ma1Color,100-opacity)
+ribbonBear        = color.new(ma2Color,100-opacity)
+
+p1 = plot(ma1, title="MA 1", color=ma1Color, linewidth=2, style=plot.style_line)
+p2 = plot(ma2, title="MA 2", color=ma2Color, linewidth=2, style=plot.style_line)
+fill(p1, p2, color = ma1>ma2 ? ribbonBull : ribbonBear)
+
+plot(extraOn ? extraMA : na, title="Extra MA", color=color.white, linewidth=2)
+plot(htfOn   ? htfMA   : na, title="HTF MA",   color=color.orange,linewidth=2)
+
+plot(adxOn ? adxVal : na, title="ADX", color=adxCol)
+hline(adxThr, "ADX Thr", color=adxCol, linestyle=hline.style_dotted)
+
+plot(atrOn ? atrPct : na, title="ATR %", color=atrCol)
+hline(atrPctThr, "ATR % Thr", color=atrCol, linestyle=hline.style_dotted)
