@@ -1,0 +1,144 @@
+//@version=6
+strategy("Pond MA X v4.0 – Visuals Enhanced", shorttitle="[PP] MA X V4.0", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.1)
+
+// 1) Price & MAs
+src        = input.source(close,      "Price Source",    group="1) Price & MAs")
+ma1Len     = input.int(    9,         "Fast MA Length",  group="1) Price & MAs")
+ma1Type    = input.string(defval="EMA", title="Fast MA Type",   options=["SMA","EMA","WMA","RMA","HMA","LSMA","ZLEMA"], group="1) Price & MAs")
+ma2Len     = input.int(   21,         "Slow MA Length",  group="1) Price & MAs")
+ma2Type    = input.string(defval="EMA", title="Slow MA Type",   options=["SMA","EMA","WMA","RMA","HMA","LSMA","ZLEMA"], group="1) Price & MAs")
+showFastMA = input.bool(true,  "Show Fast MA",   group="1) Price & MAs")
+showSlowMA = input.bool(true,  "Show Slow MA",   group="1) Price & MAs")
+
+f_zlema(_s,_l)=>
+    half = int((_l - 1) / 2)
+    ta.ema(_s + (_s - _s[half]), _l)
+f_ma(_s,_l,_t)=>
+    switch _t
+        "SMA"  => ta.sma(_s,_l)
+        "EMA"  => ta.ema(_s,_l)
+        "WMA"  => ta.wma(_s,_l)
+        "RMA"  => ta.rma(_s,_l)
+        "HMA"  => ta.hma(_s,_l)
+        "LSMA" => ta.linreg(_s,_l,0)
+        "ZLEMA"=> f_zlema(_s,_l)
+
+ma1       = f_ma(src, ma1Len, ma1Type)
+ma2       = f_ma(src, ma2Len, ma2Type)
+crossUp   = ta.crossover(ma1, ma2)
+crossDown = ta.crossunder(ma1, ma2)
+
+// track last cross for HUD
+var int lastCrossBar = na
+if crossUp or crossDown
+    lastCrossBar := bar_index
+
+// 2) Visuals
+bullClr = input.color(color.rgb(  0,179,159), "Bull Color (Up)",   group="2) Visuals")
+bearClr = input.color(color.rgb(252,124,19), "Bear Color (Down)", group="2) Visuals")
+gradOp  = input.int(80,                      "Ribbon Opacity %",  group="2) Visuals")
+
+p_r1 = plot(ma1, "", color=na, display=display.none)
+p_r2 = plot(ma2, "", color=na, display=display.none)
+fill(p_r1, p_r2, color=color.new(ma1 > ma2 ? bullClr : bearClr, gradOp))
+
+plot(showFastMA ? ma1 : na, "Fast MA", color=bullClr, linewidth=1)
+plot(showSlowMA ? ma2 : na, "Slow MA", color=bearClr, linewidth=2)
+
+plotchar(crossUp   ? ma1 : na, "Cross Up",   "⦿", location.absolute, size=size.tiny, color=bullClr)
+plotchar(crossDown ? ma2 : na, "Cross Down", "⦿", location.absolute, size=size.tiny, color=bearClr)
+
+// 3) Entry Filters
+bbOn   = input.bool(false, "Enable BBWP Filter",    group="3) Entry Filters")
+bbLen  = input.int(20,      "BBWP Length",          group="3) Entry Filters")
+bbMul  = input.float(2.0,   "BB Multiplier",        group="3) Entry Filters")
+bbThr  = input.float(20,     "BBWP Min %",           group="3) Entry Filters")
+bbwp   = 200 * bbMul * ta.stdev(src, bbLen) / ta.sma(src, bbLen)
+bbOK   = not bbOn or bbwp > bbThr
+
+xEntOn   = input.bool(false, "Enable Extra MA Entry",  group="3) Entry Filters")
+xEntTF   = input.timeframe("D",   "Timeframe",          group="3) Entry Filters")
+xEntLen  = input.int(50,    "Length",               group="3) Entry Filters")
+xEntType = input.string(defval="EMA", title="Extra MA Type", options=["SMA","EMA","WMA","RMA","HMA","LSMA","ZLEMA"], group="3) Entry Filters")
+xEntMA   = request.security(syminfo.tickerid, xEntTF, f_ma(src, xEntLen, xEntType), lookahead=barmerge.lookahead_off)
+xEntOK   = not xEntOn or close > xEntMA
+
+kerOn  = input.bool(false, "Enable KER Filter",     group="3) Entry Filters")
+kerLen = input.int(10,     "KER Length",            group="3) Entry Filters")
+kerThr = input.float(0.5,  "KER Min Ratio", 0,1,0.01, group="3) Entry Filters")
+kerChg = math.abs(close - close[kerLen])
+kerVol = math.sum(math.abs(close - close[1]), kerLen)
+kerOK  = not kerOn or (kerVol != 0 and kerChg/kerVol >= kerThr)
+
+// 4) Entry Signal Type
+signalType = input.string(defval="At Crossed Bar Close", title="Entry Signal Timing", options=["At Crossed Bar Close","Next Bar Open"], group="4) Entry Signal Type")
+
+var bool pendLong = false
+if crossUp and bbOK and xEntOK and kerOK and strategy.position_size == 0
+    if signalType == "Next Bar Open"
+        pendLong := true
+    else
+        strategy.entry("Long", strategy.long)
+if pendLong and barstate.isconfirmed[1]
+    strategy.entry("Long", strategy.long)
+    pendLong := false
+
+// 5) Exit Filters & Signal Type
+exitSignalType = input.string(defval="At Crossed Bar Close", title="Exit Signal Timing", options=["At Crossed Bar Close","Next Bar Open"], group="5) Exit Filters")
+
+xExOn   = input.bool(false, "Enable Extra MA Exit",       group="5) Exit Filters")
+xExTF   = input.timeframe("D",   "Timeframe",             group="5) Exit Filters")
+xExLen  = input.int(50,    "Length",                  group="5) Exit Filters")
+xExType = input.string(defval="EMA", title="Extra MA Type", options=["SMA","EMA","WMA","RMA","HMA","LSMA","ZLEMA"], group="5) Exit Filters")
+xExMA   = request.security(syminfo.tickerid, xExTF, f_ma(src, xExLen, xExType), lookahead=barmerge.lookahead_off)
+xExOK   = not xExOn or close < xExMA
+
+timOn   = input.bool(false, "Enable Timed/Profit Exit", group="5) Exit Filters")
+timBars = input.int(3,     "Exit After Bars",            group="5) Exit Filters")
+profHi  = input.float(5.0,  "Profit % >",                 group="5) Exit Filters")
+profLo  = input.float(-3.0, "Profit % <",                 group="5) Exit Filters")
+
+var bool pendExit = false
+if strategy.position_size > 0
+    life    = bar_index - strategy.opentrades.entry_bar_index(0)
+    pnl     = strategy.opentrades.profit_percent(0)
+    exitCond = crossDown or (xExOn and not xExOK) or (timOn and life >= timBars and (pnl > profHi or pnl < profLo))
+    if exitCond
+        if exitSignalType == "Next Bar Open"
+            pendExit := true
+        else
+            strategy.close("Long")
+if pendExit and barstate.isconfirmed[1]
+    strategy.close("Long")
+    pendExit := false
+
+// 6) Trading Days
+allowMon = input.bool(true, "Mon", group="6) Trading Days")
+allowTue = input.bool(true, "Tue", group="6) Trading Days")
+allowWed = input.bool(true, "Wed", group="6) Trading Days")
+allowThu = input.bool(true, "Thu", group="6) Trading Days")
+allowFri = input.bool(true, "Fri", group="6) Trading Days")
+allowSat = input.bool(true, "Sat", group="6) Trading Days")
+allowSun = input.bool(true, "Sun", group="6) Trading Days")
+dow      = dayofweek(time)
+dayOK    = (dow == dayofweek.monday    and allowMon) or
+           (dow == dayofweek.tuesday   and allowTue) or
+           (dow == dayofweek.wednesday and allowWed) or
+           (dow == dayofweek.thursday  and allowThu) or
+           (dow == dayofweek.friday    and allowFri) or
+           (dow == dayofweek.saturday  and allowSat) or
+           (dow == dayofweek.sunday    and allowSun)
+if not dayOK
+    strategy.close_all()
+
+// 7) Background Highlight
+bgcolor(strategy.position_size != 0 ? color.new(ma1 > ma2 ? bullClr : bearClr, 90) : na)
+
+// 8) HUD Table
+var table hud = table.new(position.top_right, 1, 3, frame_color=color.gray, frame_width=1, bgcolor=color.new(color.black,85))
+if barstate.islast
+    dur   = na(lastCrossBar) ? na : (bar_index - lastCrossBar)
+    plPct = strategy.position_size != 0 ? (close - strategy.position_avg_price) / strategy.position_avg_price * 100 : na
+    table.cell(hud, 0, 0, "Market Stage:\n"    + (ma1 > ma2 ? "Bull" : "Bear"), text_color=color.white, bgcolor=color.new(ma1>ma2 ? bullClr : bearClr,80))
+    table.cell(hud, 0, 1, "Stage Duration:\n"  + (na(dur) ? "-" : str.tostring(dur)+" bars"), text_color=color.white)
+    table.cell(hud, 0, 2, "Current Profit:\n"  + (na(plPct)? "-" : str.tostring(math.round(plPct,2))+"%"), text_color=color.white)
