@@ -1,0 +1,261 @@
+//@version=6
+strategy("Pond MA X v4.5.1 – Alert", shorttitle="[PP]MA X 4.5.1", overlay=true,
+   initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100,
+   commission_type=strategy.commission.percent, commission_value=0.1)
+
+// 1) Price & MAs
+src       = input.source(close,      "Price Source",    group="1) Price & MAs")
+ma1Len    = input.int(9,             "Fast MA Length",  group="1) Price & MAs")
+ma1Type   = input.string("EMA",      "Fast MA Type",    options=["SMA","EMA","WMA","RMA","HMA","LSMA","ZLEMA","KAMA"], group="1) Price & MAs")
+ma2Len    = input.int(21,            "Slow MA Length",  group="1) Price & MAs")
+ma2Type   = input.string("EMA",      "Slow MA Type",    options=["SMA","EMA","WMA","RMA","HMA","LSMA","ZLEMA","KAMA"], group="1) Price & MAs")
+
+
+// ─ ZLEMA helper
+f_zlema(s,l)=>
+    ema0 = ta.ema(s, l)
+    ta.ema(s + (s - ema0), l)
+
+// ─ KAMA helper
+f_kama(src,len)=>
+    fastEnd=0.666, slowEnd=0.0645
+    change=math.abs(src - src[len])
+    noise=0.0
+    for i=0 to len-1
+        noise += math.abs(src[i] - src[i+1])
+    er = noise!=0 ? change/noise : 0
+    sc = math.pow(er*(fastEnd - slowEnd) + slowEnd, 2)
+    var float k = na
+    k := na(k[1]) ? src : k[1] + sc*(src - k[1])
+    k
+
+// ─ MA selector
+f_ma(s,l,t)=>
+    switch t
+        "SMA"   => ta.sma(s,l)
+        "EMA"   => ta.ema(s,l)
+        "WMA"   => ta.wma(s,l)
+        "RMA"   => ta.rma(s,l)
+        "HMA"   => ta.hma(s,l)
+        "LSMA"  => ta.linreg(s,l,0)
+        "ZLEMA" => f_zlema(s,l)
+        "KAMA"  => f_kama(s,l)
+
+ma1       = f_ma(src, ma1Len, ma1Type)
+ma2       = f_ma(src, ma2Len, ma2Type)
+crossUp   = ta.crossover(ma1, ma2)
+crossDown = ta.crossunder(ma1, ma2)
+
+// 2) Visuals
+bullClr = input.color(color.rgb(0,179,159), "Bull Color",  group="2) Visuals")
+bearClr = input.color(color.rgb(252,124,19),"Bear Color",  group="2) Visuals")
+gradOp  = input.int(80,                    "Ribbon Opacity %", group="2) Visuals")
+// 2b) Visuals & Signals
+showWarnLose = input.bool(true, "Winning Signal",   group="2) Visuals & Signals")
+showWarnNear = input.bool(true, "Reversal Signal",  group="2) Visuals & Signals")
+warnLoseClr  = input.color(color.new(color.teal,0), "Winning Signal Color",  group="2) Visuals & Signals")
+warnNearClr  = input.color(color.new(#FFC0C0,0),   "Reversal Signal Color", group="2) Visuals & Signals")
+p1 = plot(ma1, "", color=na, display=display.none)
+p2 = plot(ma2, "", color=na, display=display.none)
+fill(p1, p2, color.new(ma1>ma2 ? bullClr : bearClr, gradOp))
+
+plot(ma1, "Fast MA", color=bullClr, linewidth=1)
+plot(ma2, "Slow MA", color=bearClr, linewidth=2)
+plotchar(crossUp ? ma1 : na, title="Cross Up",   char="⦿", location=location.absolute, size=size.tiny, color=bullClr)
+plotchar(crossDown ? ma2 : na, title="Cross Down", char="⦿", location=location.absolute, size=size.tiny, color=bearClr)
+
+// 3) Entry Filters
+bbOn       = input.bool(false,  "Enable BBWP Filter", group="3) Entry Filters")
+basisType  = input.string("SMA","Basis MA Type",      options=["SMA","EMA","WMA","RMA","HMA","VWMA"], group="3) Entry Filters")
+bbwLen     = input.int(7,       "BBW Length",         minval=1, group="3) Entry Filters")
+pctLen     = input.int(100,     "Percentile Length",  minval=1, group="3) Entry Filters")
+smoothLen  = input.int(1,       "BBWP Smooth Length", minval=1, group="3) Entry Filters")
+smoothType = input.string("SMA","BBWP Smooth Type",   options=["SMA","EMA","WMA","RMA"], group="3) Entry Filters")
+bbThr      = input.float(20,    "BBWP Min %",         group="3) Entry Filters")
+
+maSwitch(s,l,t)=>
+    switch t
+        "SMA"  => ta.sma(s,l)
+        "EMA"  => ta.ema(s,l)
+        "WMA"  => ta.wma(s,l)
+        "RMA"  => ta.rma(s,l)
+        "HMA"  => ta.hma(s,l)
+        "VWMA" => ta.vwma(s,l)
+        => na
+
+bbwpRaw()=>
+    b = maSwitch(src, bbwLen, basisType)
+    d = ta.stdev(src, bbwLen)
+    w = (b + d - (b - d)) / b
+    float cnt = 0
+    for i=0 to math.min(pctLen-1, bar_index)
+        cnt += w[i] <= w ? 1 : 0
+    cnt / math.min(pctLen, bar_index+1) * 100
+
+bbVal = bbwpRaw()
+bbwp  = switch smoothType
+    "SMA" => ta.sma(bbVal, smoothLen)
+    "EMA" => ta.ema(bbVal, smoothLen)
+    "WMA" => ta.wma(bbVal, smoothLen)
+    => ta.rma(bbVal, smoothLen)
+bbOK  = not bbOn or bbwp > bbThr
+
+xEntOn   = input.bool(false, "Enable Extra MA Entry", group="3) Entry Filters")
+xEntTF   = input.timeframe("D","HTF Timeframe",        group="3) Entry Filters")
+xEntLen  = input.int(50,    "Extra MA Length",        group="3) Entry Filters")
+xEntType = input.string("EMA","Extra MA Type",        options=["SMA","EMA","WMA","RMA","HMA","LSMA","ZLEMA","KAMA"], group="3) Entry Filters")
+xEntMA   = request.security(syminfo.tickerid, xEntTF, f_ma(src, xEntLen, xEntType), lookahead=barmerge.lookahead_off)
+xEntOK   = not xEntOn or close > xEntMA
+
+kerOn    = input.bool(false, "Enable KER Filter",      group="3) Entry Filters")
+kerLen   = input.int(10,    "KER Length",              group="3) Entry Filters")
+kerThr   = input.float(0.5, "KER Min Ratio",           step=0.01, group="3) Entry Filters")
+kerChg   = math.abs(close - close[kerLen])
+kerVol   = math.sum(math.abs(close - close[1]), kerLen)
+kerOK    = not kerOn or (kerVol!=0 and kerChg/kerVol >= kerThr)
+// — Choppiness Index filter —
+chopOn   = input.bool(false,    "Enable CI Filter",    group="3) Entry Filters")
+chopLen  = input.int(14,        "CI Length",            minval=1, group="3) Entry Filters")
+chopThr  = input.float(61.8,    "CI Upper Threshold",   group="3) Entry Filters")
+float sumAtr = 0.0
+for i = 0 to chopLen-1
+    sumAtr += ta.atr(1)[i]
+ci = 100 * math.log10(sumAtr / (ta.highest(high, chopLen) - ta.lowest(low, chopLen))) / math.log10(chopLen)
+chopOK = not chopOn or ci < chopThr
+
+// ——————————————————————————————————————————————————————————
+//  Day-of-Week Filter (moved before entry logic)
+// ——————————————————————————————————————————————————————————
+allowMon = input.bool(true, "Mon", inline="DOW", group="Date/Time Filter")
+allowTue = input.bool(true, "Tue", inline="DOW", group="Date/Time Filter")
+allowWed = input.bool(true, "Wed", inline="DOW", group="Date/Time Filter")
+allowThu = input.bool(true, "Thu", inline="DOW", group="Date/Time Filter")
+allowFri = input.bool(true, "Fri", inline="DOW", group="Date/Time Filter")
+allowSat = input.bool(true, "Sat", inline="DOW", group="Date/Time Filter")
+allowSun = input.bool(true, "Sun", inline="DOW", group="Date/Time Filter")
+dow      = dayofweek(time)
+dayOK    = (dow == dayofweek.monday    and allowMon) or 
+           (dow == dayofweek.tuesday   and allowTue) or 
+           (dow == dayofweek.wednesday and allowWed) or 
+           (dow == dayofweek.thursday  and allowThu) or 
+           (dow == dayofweek.friday    and allowFri) or 
+           (dow == dayofweek.saturday  and allowSat) or 
+           (dow == dayofweek.sunday    and allowSun)
+
+// 4) Entry Logic with Extra-MA, CI Emergency & Day-of-Week gating
+signalType    = input.string("At Crossed Bar Close", "Entry Timing", options=["At Crossed Bar Close","Next Bar Open"], group="4) Entry Logic")
+var bool pendLong      = false
+var bool missedExtraMA = false
+var bool missedCI      = false
+
+// ── Phase 1: Normal crossover entry ────────────────────────────────────────────
+if crossUp and dayOK and bbOK and xEntOK and kerOK and chopOK and strategy.position_size == 0
+    if signalType == "Next Bar Open"
+        pendLong := true
+    else
+        strategy.entry("Long", strategy.long)
+    missedExtraMA := false
+    missedCI      := false
+
+// ── Phase 1b: Fire Next-Bar Open ───────────────────────────────────────────────
+if pendLong and barstate.isconfirmed[1]
+    strategy.entry("Long", strategy.long)
+    pendLong      := false
+    missedExtraMA := false
+    missedCI      := false
+
+// ── Phase 2: Flag missed Extra-MA entry ───────────────────────────────────────
+if crossUp and not xEntOK
+    missedExtraMA := true
+
+// ── Phase 3: Emergency Extra-MA entry ─────────────────────────────────────────
+if missedExtraMA and close > xEntMA and bbOK and kerOK and chopOK and strategy.position_size == 0
+    strategy.entry("Long", strategy.long, comment="Extra MA Entry")
+    missedExtraMA := false
+
+// ── Phase 4: Flag missed CI entry ─────────────────────────────────────────────
+if crossUp and not chopOK
+    missedCI := true
+
+// ── Phase 5: Emergency CI entry ───────────────────────────────────────────────
+if missedCI and chopOK and close > xEntMA and bbOK and kerOK and strategy.position_size == 0
+    strategy.entry("Long", strategy.long, comment="CI Entry")
+    missedCI := false
+
+// ── Phase 6: Reset on reversal ────────────────────────────────────────────────
+if crossDown
+    missedExtraMA := false
+    missedCI      := false
+// 5) Exit Logic
+exitType = input.string("At Crossed Bar Close","Exit Timing",
+     options=["At Crossed Bar Close","Next Bar Open"], group="5) Exit Logic")
+xExOn   = input.bool(false,"Enable Extra MA Exit", group="5) Exit Logic")
+xExTF   = input.timeframe("D","HTF Timeframe",     group="5) Exit Logic")
+xExLen  = input.int(50,   "Extra MA Length",      group="5) Exit Logic")
+xExType = input.string("EMA","Extra MA Type",      options=["SMA","EMA","WMA","RMA","HMA","LSMA","ZLEMA","KAMA"], group="5) Exit Logic")
+xExMA   = request.security(syminfo.tickerid, xExTF, f_ma(src, xExLen, xExType), lookahead=barmerge.lookahead_off)
+xExOK   = not xExOn or close < xExMA
+var bool pendExit = false
+
+if strategy.position_size > 0
+    exitCond = crossDown or (xExOn and not xExOK)
+    if exitCond
+        if exitType == "Next Bar Open"
+            pendExit := true
+        else
+            strategy.close("Long")
+
+if pendExit and barstate.isconfirmed[1]
+    strategy.close("Long")
+    pendExit := false
+
+
+// 7) On-Chart Trade Signals
+entrySignal = strategy.position_size > 0 and strategy.position_size[1] == 0
+exitSignal  = strategy.position_size == 0 and strategy.position_size[1] > 0
+
+plotshape(entrySignal, title="Trade Entry",  style=shape.triangleup,   location=location.belowbar, color=bullClr, size=size.small)
+plotshape(exitSignal,  title="Trade Exit",   style=shape.triangledown, location=location.abovebar, color=bearClr, size=size.small)
+
+// 8) Track Closed Trades to Compute Averages
+var float sumLoseBars = 0.0
+var int   countLose   = 0
+var float sumWinBars  = 0.0
+var int   countWin    = 0
+
+if exitSignal
+    idx    = strategy.closedtrades - 1
+    eBar   = strategy.closedtrades.entry_bar_index(idx)
+    xBar   = strategy.closedtrades.exit_bar_index(idx)
+    dur    = xBar - eBar
+    prof   = strategy.closedtrades.profit(idx)
+    if prof >= 0
+        countWin   += 1
+        sumWinBars += dur
+    else
+        countLose   += 1
+        sumLoseBars += dur
+
+avgLose = countLose > 0 ? sumLoseBars / countLose : na
+avgWin  = countWin  > 0 ? sumWinBars  / countWin  : na
+
+// 9) Diamond-Warning Signals & Alerts
+currDur       = strategy.position_size > 0 ? bar_index - strategy.opentrades.entry_bar_index(0) : 0
+warnTooLong   = strategy.position_size > 0 and not na(avgLose) and currDur >= avgLose
+warnNearEnd   = strategy.position_size > 0 and not na(avgWin)  and currDur >= avgWin
+warnTooLongX  = warnTooLong and not warnTooLong[1]
+warnNearEndX  = warnNearEnd and not warnNearEnd[1]
+plotshape(warnTooLongX and showWarnLose, title="Winning Signal",  style=shape.diamond, location=location.belowbar, color=warnLoseClr, size=size.tiny)
+plotshape(warnNearEndX and showWarnNear, title="Reversal Signal", style=shape.diamond, location=location.abovebar, color=warnNearClr, size=size.tiny)
+
+
+// ── Alerts for every on-chart signal ────────────────────────────────────────────
+alertcondition(entrySignal,                                title="Pond MA X ▶ Entry",                message="▶ Entry signal fired")
+alertcondition(missedExtraMA and strategy.position_size==0, title="Pond MA X ▶ Emergency MA Entry",   message="▶ Emergency MA Entry fired")
+alertcondition(missedCI    and strategy.position_size==0,  title="Pond MA X ▶ Emergency CI Entry",   message="▶ Emergency CI Entry fired")
+alertcondition(exitSignal,                                 title="Pond MA X ◀ Exit",                 message="◀ Exit signal fired")
+alertcondition(warnTooLongX and showWarnLose,              title="Pond MA X ▶ Winning Signal",       message="▶ Winning Signal (avg-lose reached)")
+alertcondition(warnNearEndX and showWarnNear,              title="Pond MA X ▶ Reversal Signal",      message="▶ Reversal Signal (avg-win reached)")
+
+// 11) Background Highlight
+bgcolor(strategy.position_size != 0 ? color.new(ma1 > ma2 ? bullClr : bearClr, 90) : na)
